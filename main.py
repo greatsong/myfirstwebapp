@@ -1,3 +1,3 @@
 import streamlit as st
 st.title('나의 첫 웹앱!')
-st.write('이런 멋진 프로젝트라니!!')
+st.write('이런 멋진 프로젝트라니! 너무 멋져요!!')
