@@ -24,35 +24,26 @@ REQUIRED_COLS = {"기준_년분기_코드", "분기매출액", "분기거래건�
 def load_data(path: str) -> pd.DataFrame:
     df = pd.read_csv(path, encoding="cp949")
     df = df.rename(columns=RENAME_MAP)
-    # 숫자형으로 안전 변환
+    # 숫자형 변환
     for col in ["분기매출액", "분기거래건수"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-    # 문자열 컬럼 통일(공백/NaN 처리)
+    # 문자열 정리
     for col in ["상권유형", "상권이름", "업종", "기준_년분기_코드"]:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip()
     return df
 
 def fmt_억원(x: float) -> str:
-    try:
-        x = 0 if pd.isna(x) else float(x)
-    except Exception:
-        x = 0
+    x = 0 if pd.isna(x) else float(x)
     return f"{x/1e8:,.1f} 억원"
 
 def fmt_만건(x: float) -> str:
-    try:
-        x = 0 if pd.isna(x) else float(x)
-    except Exception:
-        x = 0
+    x = 0 if pd.isna(x) else float(x)
     return f"{x/1e4:,.1f} 만 건"
 
 def fmt_cnt(x: int) -> str:
-    try:
-        x = 0 if pd.isna(x) else int(x)
-    except Exception:
-        x = 0
+    x = 0 if pd.isna(x) else int(x)
     return f"{x:,} 개"
 
 def add_medal(rank: int) -> str:
@@ -69,7 +60,7 @@ if not Path(DATA_FILE).exists():
 
 df = load_data(DATA_FILE)
 
-# 필수 컬럼 확인
+# 필수 컬럼 체크
 missing = [c for c in REQUIRED_COLS if c not in df.columns]
 if missing:
     st.error(f"아래 필수 컬럼이 누락되어 있어요: {missing}\n원본 헤더가 다르면 RENAME_MAP을 조정해 주세요.")
@@ -78,30 +69,27 @@ if missing:
 # ---------------- 사이드바: 데이터 필터 ----------------
 st.sidebar.header("🧰 데이터 필터")
 
-# 분기 옵션(문자열)
+# 분기 필터
 q_all_label = "전체"
 q_options = sorted(df["기준_년분기_코드"].dropna().astype(str).unique().tolist())
 selected_quarters = st.sidebar.multiselect(
     "🗓️ 분기 선택",
     options=[q_all_label] + q_options,
     default=[q_all_label],
-    help="복수 선택 가능. '전체'를 포함하면 모든 분기가 선택됩니다."
 )
 
-# 상권유형 옵션 및 기본값
+# 상권유형 필터
 type_options = sorted(df["상권유형"].dropna().unique().tolist())
 default_types = [v for v in ["골목상권", "전통시장"] if v in type_options]
-# 기본값이 하나도 없으면 전체로 대체
 if not default_types:
     default_types = type_options
 selected_types = st.sidebar.multiselect(
     "🏙️ 상권유형",
     options=type_options,
     default=default_types,
-    help="예: 골목상권, 전통시장 등"
 )
 
-# 업종 옵션 및 기본값(전체 데이터 기준 매출 TOP5)
+# 업종 필터 (전체 기준 매출 TOP5)
 top5_overall = (
     df.groupby("업종", as_index=False)["분기매출액"]
     .sum()
@@ -112,41 +100,41 @@ top5_overall = (
 biz_options = sorted(df["업종"].dropna().unique().tolist())
 default_biz = [b for b in top5_overall if b in biz_options]
 if not default_biz:
-    default_biz = biz_options[:5]  # 안전장치
+    default_biz = biz_options[:5]
 selected_biz = st.sidebar.multiselect(
     "🏷️ 업종",
     options=biz_options,
     default=default_biz,
-    help="기본값: 전체 기준 매출 상위 5개 업종"
 )
 
-# ---------------- 필터 적용 ----------------
-df_view = df.copy()
+# ---------------- 필터 적용 (filtered_data) ----------------
+filtered_data = df.copy()
 
-# 1) 분기 필터
+# 1) 분기
 if not selected_quarters or (q_all_label not in selected_quarters):
-    # '전체'가 없고, 리스트가 비어있지 않다면 해당 분기만
     if selected_quarters:
-        df_view = df_view[df_view["기준_년분기_코드"].astype(str).isin(selected_quarters)]
+        filtered_data = filtered_data[filtered_data["기준_년분기_코드"].astype(str).isin(selected_quarters)]
 
-# 2) 상권유형 필터
+# 2) 상권유형
 if selected_types:
-    df_view = df_view[df_view["상권유형"].isin(selected_types)]
+    filtered_data = filtered_data[filtered_data["상권유형"].isin(selected_types)]
 
-# 3) 업종 필터
+# 3) 업종
 if selected_biz:
-    df_view = df_view[df_view["업종"].isin(selected_biz)]
+    filtered_data = filtered_data[filtered_data["업종"].isin(selected_biz)]
 
-# 데이터 존재 확인
-if df_view.empty:
-    st.warning("선택한 필터 조합에 해당하는 데이터가 없습니다. 🔍 필터를 조정해 보세요!")
+# 데이터 개수 표시
+st.sidebar.markdown(f"**필터링된 데이터: {len(filtered_data):,}건**")
+
+if filtered_data.empty:
+    st.warning("선택한 조건에 맞는 데이터가 없습니다. 🔍 필터를 조정해 보세요!")
     st.stop()
 
-# ---------------- 4칸 메트릭 ----------------
-total_sales = float(df_view["분기매출액"].sum(skipna=True))
-total_cnt   = float(df_view["분기거래건수"].sum(skipna=True))
-n_areas     = int(df_view["상권이름"].nunique(dropna=True))
-n_cats      = int(df_view["업종"].nunique(dropna=True))
+# ---------------- 4칸 메트릭 (filtered_data 기준) ----------------
+total_sales = float(filtered_data["분기매출액"].sum(skipna=True))
+total_cnt   = float(filtered_data["분기거래건수"].sum(skipna=True))
+n_areas     = int(filtered_data["상권이름"].nunique(dropna=True))
+n_cats      = int(filtered_data["업종"].nunique(dropna=True))
 
 c1, c2, c3, c4 = st.columns(4)
 with c1:
@@ -160,9 +148,9 @@ with c4:
 
 st.divider()
 
-# ---------------- 업종별 매출 TOP 10 (Altair) ----------------
+# ---------------- 업종별 매출 TOP 10 (filtered_data 기준) ----------------
 top10 = (
-    df_view.groupby("업종", as_index=False)["분기매출액"]
+    filtered_data.groupby("업종", as_index=False)["분기매출액"]
     .sum()
     .sort_values("분기매출액", ascending=False)
     .head(10)
@@ -217,4 +205,4 @@ st.altair_chart(chart, use_container_width=True)
 # ---------------- 미리보기 ----------------
 with st.expander("🔎 데이터 미리보기 / 컬럼 확인"):
     st.write("변환된 주요 컬럼: `기준_년분기_코드`, `상권유형`, `상권코드`, `상권이름`, `업종`, `분기매출액`, `분기거래건수`")
-    st.dataframe(df_view.head(10), use_container_width=True)
+    st.dataframe(filtered_data.head(10), use_container_width=True)
