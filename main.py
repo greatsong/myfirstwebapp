@@ -17,7 +17,7 @@ RENAME_MAP = {
     "당월_매출_금액": "분기매출액",
     "당월_매출_건수": "분기거래건수",
 }
-REQUIRED_COLS = {"기준_년분기_코드", "분기매출액", "분기거래건수", "상권이름", "업종"}
+REQUIRED_COLS = {"기준_년분기_코드", "분기매출액", "분기거래건수", "상권이름", "업종", "상권유형"}
 
 # ---------------- 헬퍼 함수 ----------------
 @st.cache_data(show_spinner=False)
@@ -28,18 +28,31 @@ def load_data(path: str) -> pd.DataFrame:
     for col in ["분기매출액", "분기거래건수"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+    # 문자열 컬럼 통일(공백/NaN 처리)
+    for col in ["상권유형", "상권이름", "업종", "기준_년분기_코드"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
     return df
 
 def fmt_억원(x: float) -> str:
-    x = 0 if pd.isna(x) else float(x)
+    try:
+        x = 0 if pd.isna(x) else float(x)
+    except Exception:
+        x = 0
     return f"{x/1e8:,.1f} 억원"
 
 def fmt_만건(x: float) -> str:
-    x = 0 if pd.isna(x) else float(x)
+    try:
+        x = 0 if pd.isna(x) else float(x)
+    except Exception:
+        x = 0
     return f"{x/1e4:,.1f} 만 건"
 
 def fmt_cnt(x: int) -> str:
-    x = 0 if pd.isna(x) else int(x)
+    try:
+        x = 0 if pd.isna(x) else int(x)
+    except Exception:
+        x = 0
     return f"{x:,} 개"
 
 def add_medal(rank: int) -> str:
@@ -47,7 +60,7 @@ def add_medal(rank: int) -> str:
 
 # ---------------- 본문 ----------------
 st.title("📊 서울 상권 분기 대시보드")
-st.caption("필터에서 분기를 선택하면 해당 분기의 메트릭과 차트가 반영돼요. (기본: 전체)")
+st.caption("사이드바에서 분기/상권유형/업종을 골라보세요. 필터가 메트릭과 차트에 반영됩니다!")
 
 # 데이터 로드
 if not Path(DATA_FILE).exists():
@@ -62,15 +75,72 @@ if missing:
     st.error(f"아래 필수 컬럼이 누락되어 있어요: {missing}\n원본 헤더가 다르면 RENAME_MAP을 조정해 주세요.")
     st.stop()
 
-# ---------------- 분기 필터 ----------------
-q_options = sorted(df["기준_년분기_코드"].dropna().astype(str).unique())
-q_label_all = "전체"
-selected_q = st.selectbox("🗓️ 분기 선택", options=[q_label_all] + list(q_options), index=0)
+# ---------------- 사이드바: 데이터 필터 ----------------
+st.sidebar.header("🧰 데이터 필터")
 
-if selected_q != q_label_all:
-    df_view = df[df["기준_년분기_코드"].astype(str) == selected_q].copy()
-else:
-    df_view = df.copy()
+# 분기 옵션(문자열)
+q_all_label = "전체"
+q_options = sorted(df["기준_년분기_코드"].dropna().astype(str).unique().tolist())
+selected_quarters = st.sidebar.multiselect(
+    "🗓️ 분기 선택",
+    options=[q_all_label] + q_options,
+    default=[q_all_label],
+    help="복수 선택 가능. '전체'를 포함하면 모든 분기가 선택됩니다."
+)
+
+# 상권유형 옵션 및 기본값
+type_options = sorted(df["상권유형"].dropna().unique().tolist())
+default_types = [v for v in ["골목상권", "전통시장"] if v in type_options]
+# 기본값이 하나도 없으면 전체로 대체
+if not default_types:
+    default_types = type_options
+selected_types = st.sidebar.multiselect(
+    "🏙️ 상권유형",
+    options=type_options,
+    default=default_types,
+    help="예: 골목상권, 전통시장 등"
+)
+
+# 업종 옵션 및 기본값(전체 데이터 기준 매출 TOP5)
+top5_overall = (
+    df.groupby("업종", as_index=False)["분기매출액"]
+    .sum()
+    .sort_values("분기매출액", ascending=False)
+    .head(5)["업종"]
+    .tolist()
+)
+biz_options = sorted(df["업종"].dropna().unique().tolist())
+default_biz = [b for b in top5_overall if b in biz_options]
+if not default_biz:
+    default_biz = biz_options[:5]  # 안전장치
+selected_biz = st.sidebar.multiselect(
+    "🏷️ 업종",
+    options=biz_options,
+    default=default_biz,
+    help="기본값: 전체 기준 매출 상위 5개 업종"
+)
+
+# ---------------- 필터 적용 ----------------
+df_view = df.copy()
+
+# 1) 분기 필터
+if not selected_quarters or (q_all_label not in selected_quarters):
+    # '전체'가 없고, 리스트가 비어있지 않다면 해당 분기만
+    if selected_quarters:
+        df_view = df_view[df_view["기준_년분기_코드"].astype(str).isin(selected_quarters)]
+
+# 2) 상권유형 필터
+if selected_types:
+    df_view = df_view[df_view["상권유형"].isin(selected_types)]
+
+# 3) 업종 필터
+if selected_biz:
+    df_view = df_view[df_view["업종"].isin(selected_biz)]
+
+# 데이터 존재 확인
+if df_view.empty:
+    st.warning("선택한 필터 조합에 해당하는 데이터가 없습니다. 🔍 필터를 조정해 보세요!")
+    st.stop()
 
 # ---------------- 4칸 메트릭 ----------------
 total_sales = float(df_view["분기매출액"].sum(skipna=True))
@@ -91,7 +161,6 @@ with c4:
 st.divider()
 
 # ---------------- 업종별 매출 TOP 10 (Altair) ----------------
-# 1) 업종별 분기매출액 합계 → 내림차순 → 상위 10
 top10 = (
     df_view.groupby("업종", as_index=False)["분기매출액"]
     .sum()
@@ -99,20 +168,18 @@ top10 = (
     .head(10)
     .reset_index(drop=True)
 )
-# 억원 컬럼 및 순위/라벨 구성
 top10["억원"] = top10["분기매출액"] / 1e8
 top10["순위"] = top10.index + 1
 top10["업종라벨"] = top10["순위"].apply(add_medal) + top10["업종"]
 
 st.subheader("📈 분기 매출 TOP 10 업종")
 
-# 2) Altair 가로 막대
 bar_height = 30
 chart_height = max(320, bar_height * len(top10))
 
 base = alt.Chart(top10).encode(
-    y=alt.Y("업종라벨:N", sort="-x", title=None),              # 가로 막대: 업종 라벨이 Y축
-    x=alt.X("억원:Q", title="매출액(억원)", axis=alt.Axis(format=",.1f")),  # X축 억원(쉼표/소수1)
+    y=alt.Y("업종라벨:N", sort="-x", title=None),
+    x=alt.X("억원:Q", title="매출액(억원)", axis=alt.Axis(format=",.1f")),
     tooltip=[
         alt.Tooltip("순위:O", title="순위"),
         alt.Tooltip("업종:N", title="업종"),
@@ -126,7 +193,6 @@ bars = base.mark_bar(cornerRadiusEnd=6).properties(
     title="분기 매출 TOP 10 업종",
 )
 
-# 3) 막대 끝에 억원 라벨(쉼표, 소수 1자리)
 labels = base.mark_text(
     align="left",
     dx=6,
