@@ -128,6 +128,21 @@ if selected_biz:
 # 데이터 개수 표시
 st.sidebar.markdown(f"**필터링된 데이터: {len(filtered_data):,}건**")
 
+# ---------------- CSV 다운로드 버튼 ----------------
+csv_data = filtered_data.to_csv(index=False, encoding="cp949")
+st.sidebar.download_button(
+    label="📥 데이터 다운로드 (CSV)",
+    data=csv_data,
+    file_name="filtered_data.csv",
+    mime="text/csv",
+)
+
+# ---------------- 출처 표기 ----------------
+st.sidebar.markdown(
+    "<small>데이터 출처: <a href='https://data.seoul.go.kr/' target='_blank'>서울 열린데이터광장</a></small>",
+    unsafe_allow_html=True
+)
+
 if filtered_data.empty:
     st.warning("선택한 조건에 맞는 데이터가 없습니다.")
     st.stop()
@@ -229,3 +244,7 @@ with tab2:
         st.altair_chart(age_chart, use_container_width=True)
     else:
         st.info("⚠️ 데이터에 연령대별 매출 컬럼이 없습니다.")
+
+# ---------------- 푸터 ----------------
+st.markdown("<hr style='margin-top:40px;margin-bottom:10px'>", unsafe_allow_html=True)
+st.markdown("<div style='text-align:center; color:gray;'>Made by 석리송, with AI support</div>", unsafe_allow_html=True)
